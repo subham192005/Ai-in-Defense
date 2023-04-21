@@ -1,0 +1,176 @@
+import pygame
+import random
+import numpy as np
+import tensorflow as tf
+
+# Define constants
+WIDTH = 800
+HEIGHT = 600
+FPS = 60
+MISSILE_SPEED = 5
+CITY_X = 300
+CITY_Y = 550
+CITY_WIDTH = 200
+CITY_HEIGHT = 50
+MAX_MISSILES = 10
+GAMMA = 0.9
+EPSILON = 0.1
+LEARNING_RATE = 0.1
+
+# Define colors
+WHITE = (255, 255, 255)
+BLACK = (0, 0, 0)
+RED = (255, 0, 0)
+
+# Initialize Pygame
+pygame.init()
+pygame.mixer.init()
+screen = pygame.display.set_mode((WIDTH, HEIGHT))
+pygame.display.set_caption("Missile Defense System Simulation")
+clock = pygame.time.Clock()
+
+
+# Define classes
+class Missile(pygame.sprite.Sprite):
+    def __init__(self):
+        super().__init__()
+        self.image = pygame.Surface((10, 30))
+        self.image.fill(RED)
+        self.rect = self.image.get_rect()
+        self.rect.x = random.randrange(0, WIDTH)
+        self.rect.y = 0
+
+    def update(self):
+        self.rect.y += MISSILE_SPEED
+        if self.rect.y > HEIGHT:
+            self.kill()
+
+
+class City(pygame.sprite.Sprite):
+    def __init__(self):
+        super().__init__()
+        self.image = pygame.Surface((CITY_WIDTH, CITY_HEIGHT))
+        self.image.fill(WHITE)
+        self.rect = self.image.get_rect()
+        self.rect.x = CITY_X
+        self.rect.y = CITY_Y
+
+
+class MissileDefenseSystem(pygame.sprite.Sprite):
+    def __init__(self):
+        super().__init__()
+        self.image = pygame.Surface((30, 30))
+        self.image.fill(BLACK)
+        self.rect = self.image.get_rect()
+        self.rect.x = CITY_X + CITY_WIDTH / 2 - 15
+        self.rect.y = CITY_Y - 30
+
+    def update(self):
+        if self.rect.x < 0:
+            self.rect.x = 0
+        elif self.rect.x > WIDTH - 30:
+            self.rect.x = WIDTH - 30
+
+
+# Define functions
+def get_state(city, missile):
+    state = []
+    state.append(city.rect.x)
+    state.append(city.rect.y)
+    state.append(missile.rect.x)
+    state.append(missile.rect.y)
+    return np.array(state)
+
+
+def choose_action(state, model, epsilon):
+    if random.uniform(0, 1) < epsilon:
+        action = random.randint(0, 2)
+    else:
+        action = np.argmax(model.predict(np.array([state]))[0])
+    return action
+
+
+def update_q_table(q_table, state, action, reward, next_state):
+    predict = q_table.predict(np.array([state]))[0]
+    target = reward + GAMMA * np.max(q_table.predict(np.array([next_state]))[0])
+    predict[action] = predict[action] + LEARNING_RATE * (target - predict[action])
+    q_table.fit(np.array([state]), np.array([predict]), epochs=1, verbose=0)
+
+
+def train_model(q_table, episodes):
+    for episode in range(episodes):
+        city = City()
+        missile_defense_system = MissileDefenseSystem()
+        all_sprites = pygame.sprite.Group()
+        all_sprites.add(city)
+        all_sprites.add(missile_defense_system)
+        missiles = pygame.sprite.Group()
+        score =0
+        done = False
+        while not done:
+            # Generate new missile
+            if len(missiles) < MAX_MISSILES:
+                missile = Missile()
+                all_sprites.add(missile)
+                missiles.add(missile)
+
+            # Get current status
+            # Get current state
+            state = get_state(city, missile)
+
+            # Choose action
+            action = choose_action(state, q_table, EPSILON)
+
+            # Perform action
+            if action == 0:
+                missile_defense_system.rect.x -= 5
+            elif action == 2:
+                missile_defense_system.rect.x += 5
+
+            # Update sprites
+            all_sprites.update()
+
+            # Check for collision
+            hits = pygame.sprite.spritecollide(missile_defense_system, missiles, False)
+            if hits:
+                reward = 100
+                done = True
+                for missile in hits:
+                    missile.kill()
+            else:
+                reward = -1
+
+            # Get next state
+            if len(missiles) > 0:
+                next_state = get_state(city, missiles.sprites()[0])
+            else:
+                next_state = None
+
+            # Update Q-table
+            if next_state is not None:
+                update_q_table(q_table, state, action, reward, next_state)
+
+            # Set current state to next state
+            state = next_state
+
+            # Display game
+            screen.fill((255, 255, 255))
+            all_sprites.draw(screen)
+            pygame.display.flip()
+
+            # Increase score
+            score += reward
+
+            # Reset game if done
+            if done:
+                print("Episode:", episode + 1, "Score:", score)
+                if episode % 100 == 0:
+                    print(q_table)  # Print Q-table every 100 episodes
+                if episode % 1000 == 0:
+                    save_q_table(q_table)  # Save Q-table every 1000 episodes
+                all_sprites.empty()
+                missiles.empty()
+                city = City()
+                missile_defense_system = MissileDefenseSystem()
+                all_sprites.add(city)
+                all_sprites.add(missile_defense_system)
